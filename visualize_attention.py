@@ -34,6 +34,8 @@ from PIL import Image
 import utils
 import vision_transformer as vits
 
+from skimage.filters import threshold_otsu
+
 
 def apply_mask(image, mask, color, alpha=0.5):
     for c in range(3):
@@ -75,7 +77,7 @@ def display_instances(image, mask, fname="test", figsize=(5, 5), blur=False, con
         color = colors[i]
         _mask = mask[i]
         if blur:
-            _mask = cv2.blur(_mask,(10,10))
+            _mask = cv2.blur(_mask, (10, 10))
         # Mask
         masked_image = apply_mask(masked_image, _mask, color, alpha)
         # Mask Polygon
@@ -95,15 +97,46 @@ def display_instances(image, mask, fname="test", figsize=(5, 5), blur=False, con
     return
 
 
+def run_bounding_box_detection(attention_images, original_image_path):
+    # Combine Attention Maps
+    combined_attention_map = np.mean(attention_images, axis=0)
+
+    # Normalize Attention Map
+    combined_attention_map -= combined_attention_map.min()
+    combined_attention_map /= combined_attention_map.max()
+
+    # Use Otsu's thresholding method to automatically find an optimal threshold value
+    threshold = threshold_otsu(combined_attention_map)
+    _, thresholded_map = cv2.threshold(combined_attention_map, threshold, 255, cv2.THRESH_BINARY)
+
+    # Apply morphological operations to remove noise and separate regions of interest
+    # Here we use a larger kernel and more iterations for noise removal
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    thresholded_map = cv2.morphologyEx(thresholded_map.astype(np.uint8), cv2.MORPH_OPEN, kernel, iterations=2)
+
+    # Find contours in the thresholded map
+    contours, _ = cv2.findContours(thresholded_map, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Load the original image
+    original_image = cv2.imread(original_image_path)
+
+    # Draw bounding boxes on the original image based on these contours
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        cv2.rectangle(original_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+    return original_image
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('Visualize Self-Attention maps')
     parser.add_argument('--arch', default='vit_small', type=str,
-        choices=['vit_tiny', 'vit_small', 'vit_base'], help='Architecture (support only ViT atm).')
+                        choices=['vit_tiny', 'vit_small', 'vit_base'], help='Architecture (support only ViT atm).')
     parser.add_argument('--patch_size', default=8, type=int, help='Patch resolution of the model.')
     parser.add_argument('--pretrained_weights', default='', type=str,
-        help="Path to pretrained weights to load.")
+                        help="Path to pretrained weights to load.")
     parser.add_argument("--checkpoint_key", default="teacher", type=str,
-        help='Key to use in the checkpoint (example: "teacher")')
+                        help='Key to use in the checkpoint (example: "teacher")')
     parser.add_argument("--image_path", default=None, type=str, help="Path of the image to load.")
     parser.add_argument("--image_size", default=(480, 480), type=int, nargs="+", help="Resize image.")
     parser.add_argument('--output_dir', default='.', help='Path where to save visualizations.')
@@ -178,7 +211,7 @@ if __name__ == '__main__':
 
     attentions = model.get_last_selfattention(img.to(device))
 
-    nh = attentions.shape[1] # number of head
+    nh = attentions.shape[1]  # number of head
 
     # we keep only the output patch attention
     attentions = attentions[0, :, 0, 1:].reshape(nh, -1)
@@ -194,14 +227,17 @@ if __name__ == '__main__':
             th_attn[head] = th_attn[head][idx2[head]]
         th_attn = th_attn.reshape(nh, w_featmap, h_featmap).float()
         # interpolate
-        th_attn = nn.functional.interpolate(th_attn.unsqueeze(0), scale_factor=args.patch_size, mode="nearest")[0].cpu().numpy()
+        th_attn = nn.functional.interpolate(th_attn.unsqueeze(0), scale_factor=args.patch_size, mode="nearest")[
+            0].cpu().numpy()
 
     attentions = attentions.reshape(nh, w_featmap, h_featmap)
-    attentions = nn.functional.interpolate(attentions.unsqueeze(0), scale_factor=args.patch_size, mode="nearest")[0].cpu().numpy()
+    attentions = nn.functional.interpolate(attentions.unsqueeze(0), scale_factor=args.patch_size, mode="nearest")[
+        0].cpu().numpy()
 
     # save attentions heatmaps
     os.makedirs(args.output_dir, exist_ok=True)
-    torchvision.utils.save_image(torchvision.utils.make_grid(img, normalize=True, scale_each=True), os.path.join(args.output_dir, "img.png"))
+    torchvision.utils.save_image(torchvision.utils.make_grid(img, normalize=True, scale_each=True),
+                                 os.path.join(args.output_dir, "img.png"))
     for j in range(nh):
         fname = os.path.join(args.output_dir, "attn-head" + str(j) + ".png")
         plt.imsave(fname=fname, arr=attentions[j], format='png')
@@ -210,30 +246,31 @@ if __name__ == '__main__':
     if args.threshold is not None:
         image = skimage.io.imread(os.path.join(args.output_dir, "img.png"))
         for j in range(nh):
-            display_instances(image, th_attn[j], fname=os.path.join(args.output_dir, "mask_th" + str(args.threshold) + "_head" + str(j) +".png"), blur=False)
+            display_instances(image, th_attn[j], fname=os.path.join(args.output_dir,
+                                                                    "mask_th" + str(args.threshold) + "_head" + str(
+                                                                        j) + ".png"), blur=False)
 
-        # get the combined attention map
-        combined_attention = np.mean(attentions, axis=0)
+    # get the combined attention map
+    combined_attention = np.mean(attentions, axis=0)
 
-        # save the combined attention map
-        combined_attention_path = "/content/dino/combined_attention.png"
-        plt.imsave(fname=combined_attention_path, arr=combined_attention, format='png')
-        print(f"{combined_attention_path} saved.")
+    # save the combined attention map
+    combined_attention_path = "/content/dino/combined_attention.png"
+    plt.imsave(fname=combined_attention_path, arr=combined_attention, format='png')
+    print(f"{combined_attention_path} saved.")
 
-        # load the combined attention map and original image
-        combined_attention_image = cv2.imread(combined_attention_path, cv2.IMREAD_GRAYSCALE)
-        original_image_path = args.image_path
+    # load the combined attention map and original image
+    combined_attention_image = cv2.imread(combined_attention_path, cv2.IMREAD_GRAYSCALE)
+    original_image_path = args.image_path
 
-        # ensure the sizes of the attention map and the original image match
-        original_image_size = cv2.imread(original_image_path).shape[:2]
-        combined_attention_image = cv2.resize(combined_attention_image, original_image_size[::-1])
+    # ensure the sizes of the attention map and the original image match
+    original_image_size = cv2.imread(original_image_path).shape[:2]
+    combined_attention_image = cv2.resize(combined_attention_image, original_image_size[::-1])
 
-        # run bounding box detection on the combined attention map
-        output_image = run_bounding_box_detection([combined_attention_image], original_image_path)
+    # run bounding box detection on the combined attention map
+    output_image = run_bounding_box_detection([combined_attention_image], original_image_path)
 
-        # save output image
-        output_image_path = "/content/drive/MyDrive/Models/trained_weights/output_image.jpg"
-        cv2.imwrite(output_image_path, output_image)
+    # save output image
+    output_image_path = "/content/drive/MyDrive/Models/trained_weights/output_image.jpg"
+    cv2.imwrite(output_image_path, output_image)
 
-        # display a message indicating the image is saved
-        print("Output image saved successfully.")
+    print("Output image saved successfully.")
