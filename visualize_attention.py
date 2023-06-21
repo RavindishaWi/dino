@@ -212,10 +212,28 @@ if __name__ == '__main__':
         for j in range(nh):
             display_instances(image, th_attn[j], fname=os.path.join(args.output_dir, "mask_th" + str(args.threshold) + "_head" + str(j) +".png"), blur=False)
 
-    # get the combined attention map
-    combined_attention = np.mean(attentions, axis=0)
+        # get the combined attention map
+        combined_attention = np.mean(attentions, axis=0)
 
-    # save combined attention map
-    fname = os.path.join(args.output_dir, "combined_attention.png")
-    plt.imsave(fname=fname, arr=combined_attention, format='png')
-    print(f"{fname} saved.")
+        # save the combined attention map
+        combined_attention_path = "/content/dino/combined_attention.png"
+        plt.imsave(fname=combined_attention_path, arr=combined_attention, format='png')
+        print(f"{combined_attention_path} saved.")
+
+        # load the combined attention map and original image
+        combined_attention_image = cv2.imread(combined_attention_path, cv2.IMREAD_GRAYSCALE)
+        original_image_path = args.image_path
+
+        # ensure the sizes of the attention map and the original image match
+        original_image_size = cv2.imread(original_image_path).shape[:2]
+        combined_attention_image = cv2.resize(combined_attention_image, original_image_size[::-1])
+
+        # run bounding box detection on the combined attention map
+        output_image = run_bounding_box_detection([combined_attention_image], original_image_path)
+
+        # save output image
+        output_image_path = "/content/drive/MyDrive/Models/trained_weights/output_image.jpg"
+        cv2.imwrite(output_image_path, output_image)
+
+        # display a message indicating the image is saved
+        print("Output image saved successfully.")
