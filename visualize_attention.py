@@ -98,29 +98,29 @@ def display_instances(image, mask, fname="test", figsize=(5, 5), blur=False, con
 
 
 def run_bounding_box_detection(attention_images, original_image_path):
-    # Combine Attention Maps
+    # combine attention maps
     combined_attention_map = np.mean(attention_images, axis=0)
 
-    # Normalize Attention Map
+    # normalize attention map
     combined_attention_map -= combined_attention_map.min()
     combined_attention_map /= combined_attention_map.max()
 
-    # Use Otsu's thresholding method to automatically find an optimal threshold value
+    # use Otsu's thresholding method to automatically find an optimal threshold value
     threshold = threshold_otsu(combined_attention_map)
     _, thresholded_map = cv2.threshold(combined_attention_map, threshold, 255, cv2.THRESH_BINARY)
 
-    # Apply morphological operations to remove noise and separate regions of interest
-    # Here we use a larger kernel and more iterations for noise removal
+    # apply morphological operations to remove noise and separate regions of interest
+    # using a larger kernel and more iterations for noise removal
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     thresholded_map = cv2.morphologyEx(thresholded_map.astype(np.uint8), cv2.MORPH_OPEN, kernel, iterations=2)
 
-    # Find contours in the thresholded map
+    # find contours in the thresholded map
     contours, _ = cv2.findContours(thresholded_map, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Load the original image
+    # load the original image
     original_image = cv2.imread(original_image_path)
 
-    # Draw bounding boxes on the original image based on these contours
+    # draw bounding boxes on the original image based on these contours
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
         cv2.rectangle(original_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
