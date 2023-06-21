@@ -211,3 +211,11 @@ if __name__ == '__main__':
         image = skimage.io.imread(os.path.join(args.output_dir, "img.png"))
         for j in range(nh):
             display_instances(image, th_attn[j], fname=os.path.join(args.output_dir, "mask_th" + str(args.threshold) + "_head" + str(j) +".png"), blur=False)
+
+    # get the combined attention map
+    combined_attention = np.mean(attentions, axis=0)
+
+    # save combined attention map
+    fname = os.path.join(args.output_dir, "combined_attention.png")
+    plt.imsave(fname=fname, arr=combined_attention, format='png')
+    print(f"{fname} saved.")
